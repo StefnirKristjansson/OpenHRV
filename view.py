@@ -1,3 +1,5 @@
+import json
+from sqlite3 import Timestamp
 import pyqtgraph as pg
 import asyncio
 from utils import valid_address, valid_path
@@ -10,8 +12,9 @@ from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QIcon, QLinearGradient, QBrush, QGradient
 from sensor import SensorScanner, SensorClient
 from logger import RedisPublisher, RedisLogger
-
+from datetime import datetime
 import resources    # noqa
+import httpx
 
 
 class ViewSignals(QObject):
@@ -55,12 +58,14 @@ class View(QMainWindow):
         self.model.hrv_target_update.connect(self.redis_publisher.publish)
         self.model.biofeedback_update.connect(self.redis_publisher.publish)
         self.signals.annotation.connect(self.redis_publisher.publish)
-        self.redis_publisher_thread.started.connect(self.redis_publisher.monitor.start)
+        self.redis_publisher_thread.started.connect(
+            self.redis_publisher.monitor.start)
 
         self.redis_logger = RedisLogger()
         self.redis_logger_thread = QThread()
         self.redis_logger.moveToThread(self.redis_logger_thread)
-        self.redis_logger_thread.finished.connect(self.redis_logger.save_recording)
+        self.redis_logger_thread.finished.connect(
+            self.redis_logger.save_recording)
         self.signals.start_recording.connect(self.redis_logger.start_recording)
         self.redis_logger.recording_status.connect(self.show_recording_status)
         self.redis_logger.status_update.connect(self.show_status)
@@ -85,7 +90,8 @@ class View(QMainWindow):
         self.mean_hrv_plot.setBackground("w")
         self.mean_hrv_plot.setLabel("left", "HRV (msec)",
                                 **{"font-size": "25px"})
-        self.mean_hrv_plot.setLabel("bottom", "Seconds", **{"font-size": "25px"})
+        self.mean_hrv_plot.setLabel(
+            "bottom", "Seconds", **{"font-size": "25px"})
         self.mean_hrv_plot.showGrid(y=True)
         self.mean_hrv_plot.setYRange(0, 600, padding=0)
         self.mean_hrv_plot.setMouseEnabled(x=False, y=False)
@@ -100,7 +106,8 @@ class View(QMainWindow):
         self.mean_hrv_signal = pg.PlotCurveItem()
         pen = pg.mkPen(color="w", width=7.5)
         self.mean_hrv_signal.setPen(pen)
-        self.mean_hrv_signal.setData(self.model.mean_hrv_seconds, self.model.mean_hrv_buffer)
+        self.mean_hrv_signal.setData(
+            self.model.mean_hrv_seconds, self.model.mean_hrv_buffer)
         self.mean_hrv_plot.addItem(self.mean_hrv_signal)
 
         self.pacer_plot = pg.PlotWidget()
@@ -121,7 +128,8 @@ class View(QMainWindow):
 
         self.pacer_rate = QSlider(Qt.Horizontal)
         self.pacer_rate.setTracking(False)
-        self.pacer_rate.setRange(0, 6)    # transformed to bpm [4, 7], step .5 by model
+        # transformed to bpm [4, 7], step .5 by model
+        self.pacer_rate.setRange(0, 6)
         self.pacer_rate.valueChanged.connect(self.model.set_breathing_rate)
         self.pacer_rate.setSliderPosition(4)    # corresponds to 6 bpm
         self.pacer_label = QLabel(f"Rate: {self.model.breathing_rate}")
@@ -154,10 +162,12 @@ class View(QMainWindow):
         self.start_recording_button.clicked.connect(self.get_filepath)
 
         self.save_recording_button = QPushButton("Save")
-        self.save_recording_button.clicked.connect(self.redis_logger.save_recording)
+        self.save_recording_button.clicked.connect(
+            self.redis_logger.save_recording)
 
         self.annotation = QComboBox()
-        self.annotation.setEditable(True)    # user can add custom annotations (edit + enter)
+        # user can add custom annotations (edit + enter)
+        self.annotation.setEditable(True)
         self.annotation.setDuplicatesEnabled(False)
         self.annotation_button = QPushButton("Annotate")
         self.annotation_button.clicked.connect(self.emit_annotation)
@@ -207,7 +217,8 @@ class View(QMainWindow):
         self.recording_config.addWidget(self.start_recording_button, 0, 0)
         self.recording_config.addWidget(self.save_recording_button, 0, 1)
         self.recording_config.addWidget(self.recording_statusbar, 0, 2)
-        self.recording_config.addWidget(self.annotation, 1, 0, 1, 2)    # row, column, rowspan, columnspan
+        # row, column, rowspan, columnspan
+        self.recording_config.addWidget(self.annotation, 1, 0, 1, 2)
         self.recording_config.addWidget(self.annotation_button, 1, 2)
         self.recording_panel = QGroupBox("Recording")
         self.recording_panel.setLayout(self.recording_config)
@@ -233,8 +244,10 @@ class View(QMainWindow):
         self.scanner_thread.quit()
         self.scanner_thread.wait()
 
-        self.sensor_thread.quit()    # since quit() only works if the thread has a running event loop...
-        self.sensor.loop.call_soon_threadsafe(self.sensor.stop)    # ...the event loop must only be stopped AFTER quit() has been called!
+        # since quit() only works if the thread has a running event loop...
+        self.sensor_thread.quit()
+        # ...the event loop must only be stopped AFTER quit() has been called!
+        self.sensor.loop.call_soon_threadsafe(self.sensor.stop)
         self.sensor_thread.wait()
 
         self.redis_publisher_thread.quit()
@@ -245,7 +258,8 @@ class View(QMainWindow):
 
     def get_filepath(self):
         current_time = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
-        default_file_name = f"sub-?_day-?_task-?_time-{current_time}.tsv"    # question marks are invalid characters for file names on Windows and hence force user to specify file name
+        # question marks are invalid characters for file names on Windows and hence force user to specify file name
+        default_file_name = f"sub-?_day-?_task-?_time-{current_time}.tsv"
         file_path = QFileDialog.getSaveFileName(None, "Create file",
                                                 default_file_name,
                                                 options=QFileDialog.DontUseNativeDialog)[0]    # native file dialog not reliable on Windows (most likely COM issues)
@@ -259,7 +273,9 @@ class View(QMainWindow):
     def connect_sensor(self):
         if not self.address_menu.currentText():
             return
-        address = self.address_menu.currentText().split(",")[1].strip()    # discard device name
+        address = self.address_menu.currentText().split(
+            ",")[1].strip()  # discard device name
+
         if not valid_address(address):
             print(f"Invalid sensor address: {address}.")
             return
@@ -270,6 +286,28 @@ class View(QMainWindow):
         self.sensor.loop.call_soon_threadsafe(self.sensor.disconnect_client)
 
     def plot_ibis(self, ibis):
+        timestamp= datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        client = httpx.Client()
+
+        reqUrl = "https://hr-polar.mentalmeasure.com/measurement"
+
+        headersList = {
+            "Accept": "*/*",
+            "User-Agent": "Thunder Client (https://www.thunderclient.com)",
+            "Authorization": "Bearer 12345",
+            "Content-Type": "application/json"
+        }
+
+        payload = json.dumps({
+            "date": timestamp,
+            "ibi": int(ibis[1][-1]),
+            "polar_unit": self.address_menu.currentText().split(",")[0].strip()
+        })
+
+        data = client.post(reqUrl, data=payload, headers=headersList)
+
+        print(data.text)
+        print(self.address_menu.currentText().split(",")[0].strip())
         self.ibis_signal.setData(self.model.ibis_seconds, ibis[1])
 
     def plot_hrv(self, hrv):
